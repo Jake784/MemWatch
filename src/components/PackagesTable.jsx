@@ -1,17 +1,45 @@
 import { useMemo } from 'react';
+import { SHOULD_BE_DISABLED } from '../utils/logParser';
 
 function shortTime(ts) {
   const parts = ts.split(' ');
   return parts.length === 2 ? parts[1].slice(0, 5) : ts.slice(0, 5);
 }
 
+function isDisabled(v) { return v === 0 || v === 3; }
+
+function pkgHasActiveProcess(pkgName, procs) {
+  const lower = pkgName.toLowerCase();
+  return procs.some(p => {
+    const pl = p.trim().toLowerCase();
+    return pl.length > 0 && (pl.includes(lower) || lower.includes(pl));
+  });
+}
+
+function MemBadge() {
+  return (
+    <div
+      style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444', flexShrink: 0, cursor: 'default' }}
+      title="Proceso activo en memoria detectado en última entrada"
+    />
+  );
+}
+
 function StatusDot({ value }) {
-  const color = value === 0 ? '#10b981' : '#ef4444';
+  if (value == null) {
+    return (
+      <div className="flex items-center justify-center">
+        <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#374151', flexShrink: 0 }} title="No registrado" />
+      </div>
+    );
+  }
+  const color = isDisabled(value) ? '#10b981' : '#ef4444';
+  const label = value === 0 ? 'Deshabilitado (sistema)' : value === 3 ? 'Deshabilitado (usuario)' : 'Activo';
   return (
     <div className="flex items-center justify-center">
       <div
         style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }}
-        title={`enabled=${value}`}
+        title={`${label} (enabled=${value})`}
       />
     </div>
   );
@@ -20,14 +48,18 @@ function StatusDot({ value }) {
 export default function PackagesTable({ entries }) {
   const { packages, timestamps, packageNames } = useMemo(() => {
     if (!entries.length) return { packages: [], timestamps: [], packageNames: [] };
-    const names = Object.keys(entries[0].packages);
+    const logNames = Object.keys(entries[0].packages);
+    const names = [...new Set([...logNames, ...SHOULD_BE_DISABLED])];
     return {
       packageNames: names,
       timestamps: entries.map(e => ({ full: e.timestamp, short: shortTime(e.timestamp) })),
       packages: names.map(name => ({
         name,
-        values: entries.map(e => e.packages[name] ?? 0),
-        hasIssue: entries.some(e => (e.packages[name] ?? 0) !== 0),
+        values: entries.map(e => e.packages[name] ?? null),
+        hasIssue: entries.some(e => {
+          const v = e.packages[name];
+          return v != null && !isDisabled(v);
+        }),
       })),
     };
   }, [entries]);
@@ -39,6 +71,8 @@ export default function PackagesTable({ entries }) {
       </div>
     );
   }
+
+  const activeProcs = entries[entries.length - 1]?.unwantedProcesses ?? [];
 
   const MAX_COLS = 30;
   const displayedEntries = entries.length > MAX_COLS
@@ -54,7 +88,7 @@ export default function PackagesTable({ entries }) {
           Estado de Paquetes Deshabilitados
         </h3>
         <p style={{ color: '#6b7280', fontSize: '12px', marginTop: 4 }}>
-          Verde = disabled (0) · Rojo = enabled (1/2)
+          Verde = disabled (0/3) · Rojo = enabled (1/2)
           {entries.length > MAX_COLS && ` · Mostrando ${displayedEntries.length} de ${entries.length} entradas`}
         </p>
       </div>
@@ -122,8 +156,9 @@ export default function PackagesTable({ entries }) {
           </thead>
           <tbody>
             {packages.map((pkg, rowIdx) => {
-              const displayedVals = displayedEntries.map(e => e.packages[pkg.name] ?? 0);
-              const lastVal = entries[entries.length - 1].packages[pkg.name] ?? 0;
+              const displayedVals = displayedEntries.map(e => e.packages[pkg.name] ?? null);
+              const lastVal = entries[entries.length - 1].packages[pkg.name] ?? null;
+              const inMemory = pkgHasActiveProcess(pkg.name, activeProcs);
               return (
                 <tr
                   key={pkg.name}
@@ -155,14 +190,34 @@ export default function PackagesTable({ entries }) {
                       <StatusDot value={val} />
                     </td>
                   ))}
-                  <td style={{ padding: '7px 12px', textAlign: 'center', borderLeft: '1px solid #1f2937' }}>
-                    <StatusDot value={lastVal} />
+                  <td style={{ padding: '7px 12px', borderLeft: '1px solid #1f2937' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                      <StatusDot value={lastVal} />
+                      {inMemory && <MemBadge />}
+                    </div>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+      </div>
+      {/* Legend */}
+      <div style={{ padding: '10px 16px', borderTop: '1px solid #1f2937', display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
+        <span style={{ color: '#4b5563', fontFamily: "'Space Grotesk', sans-serif", fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+          Leyenda
+        </span>
+        {[
+          { size: 10, color: '#10b981', label: 'Deshabilitado (0/3)' },
+          { size: 10, color: '#ef4444', label: 'Activo (1/2)' },
+          { size: 10, color: '#374151', label: 'No registrado' },
+          { size: 6,  color: '#ef4444', label: 'Proceso activo en memoria (col. Actual)' },
+        ].map(({ size, color, label }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <div style={{ width: size, height: size, borderRadius: '50%', background: color, flexShrink: 0 }} />
+            <span style={{ color: '#6b7280', fontFamily: "'Space Grotesk', sans-serif", fontSize: '11px' }}>{label}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

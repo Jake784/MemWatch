@@ -1,3 +1,5 @@
+import { SHOULD_BE_DISABLED } from './logParser';
+
 export function computeStats(entries) {
   const memVals  = entries.map(e => e.memAvailableMB);
   const swapVals = entries.map(e => e.swapUsedMB);
@@ -12,14 +14,24 @@ export function computeStats(entries) {
   };
 }
 
+function isDisabled(v) { return v === 0 || v === 3; }
+
 export function getAllPackages(entriesA, entriesB) {
   const lastA = entriesA[entriesA.length - 1];
   const lastB = entriesB[entriesB.length - 1];
-  const names = new Set([...Object.keys(lastA.packages), ...Object.keys(lastB.packages)]);
-  return Array.from(names).map(name => {
-    const valA = lastA.packages[name] ?? 0;
-    const valB = lastB.packages[name] ?? 0;
-    return { name, valA, valB, isProblematic: valA !== 0 && valB === 0 };
+  const names = [
+    ...new Set([
+      ...Object.keys(lastA.packages),
+      ...Object.keys(lastB.packages),
+      ...SHOULD_BE_DISABLED,
+    ]),
+  ];
+  return names.map(name => {
+    const valA = lastA.packages[name] ?? null;
+    const valB = lastB.packages[name] ?? null;
+    const aActive   = valA != null && !isDisabled(valA);
+    const bDisabled = valB == null  || isDisabled(valB);
+    return { name, valA, valB, isProblematic: aActive && bDisabled };
   });
 }
 
@@ -83,7 +95,7 @@ export function generateDiagnosticInsights(statsA, statsB, labelA, labelB, pkgDi
   if (pkgDiffs.length > 0) {
     const list = pkgDiffs.map(p => p.name).join(', ');
     findings.push(
-      `Los siguientes paquetes están activos en ${labelA} y podrían ser responsables del consumo adicional: ${list}`
+      `Los siguientes paquetes están activos en "${labelA}" y podrían ser responsables del consumo adicional: ${list}`
     );
   }
 

@@ -1,5 +1,19 @@
 const SEPARATOR_RE = /─{10,}/;
 
+export const SHOULD_BE_DISABLED = [
+  'com.android.bluetooth',
+  'com.android.inputmethod.latin',
+  'com.android.inputmethod.pinyin',
+  'com.rockchips.dlna',
+  'com.rockchips.mediacenter',
+  'android.rk.RockVideoPlayer',
+  'com.android.music',
+  'com.android.calculator2',
+  'com.android.dreams.basic',
+  'com.android.printspooler',
+  'com.android.wallpaperpicker',
+];
+
 function parseTimestamp(line) {
   const m = line.match(/\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]/);
   return m ? m[1] : null;
@@ -88,6 +102,12 @@ function parseEntry(block) {
   const top   = parseTopProcesses(sections['TOP 5 PROCESOS POR RAM'] || []);
   const cpu   = parseCpu(sections['CPU'] || []);
 
+  const activeFromPkgs = SHOULD_BE_DISABLED.filter(name => {
+    const val = pkgs[name];
+    return val !== undefined && val !== 0 && val !== 3;
+  });
+  const mergedProcs = [...new Set([...procs, ...activeFromPkgs])];
+
   return {
     timestamp,
     memTotal:        mem.memTotal,
@@ -97,8 +117,8 @@ function parseEntry(block) {
     swapUsed:        mem.swapUsed,
     swapUsedMB:      Math.round(mem.swapUsed / 1024),
     packages:        pkgs,
-    unwantedProcesses:    procs,
-    hasUnwantedProcesses: procs.length > 0,
+    unwantedProcesses:    mergedProcs,
+    hasUnwantedProcesses: mergedProcs.length > 0,
     topProcesses:    top,
     cpuLoad:         cpu,
     cpuLoad1:        cpu[0] ?? 0,

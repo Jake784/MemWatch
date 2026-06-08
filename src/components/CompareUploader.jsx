@@ -129,8 +129,8 @@ function UploadCard({ cardLabel, accent, file, label, onFile, onLabelChange }) {
 export default function CompareUploader({ onBothLoaded }) {
   const [fileA, setFileA]   = useState(null);
   const [fileB, setFileB]   = useState(null);
-  const [labelA, setLabelA] = useState('Con paquetes habilitados');
-  const [labelB, setLabelB] = useState('Dispositivo de referencia');
+  const [labelA, setLabelA] = useState('Dispositivo con paquetes habilitados');
+  const [labelB, setLabelB] = useState('Dispositivo sin paquetes habilitados');
 
   const ready = fileA && fileB;
 

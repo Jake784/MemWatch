@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Activity, FolderOpen, X, FileDown, GitCompareArrows, BarChart2 } from 'lucide-react';
+import { useState, useMemo, useRef } from 'react';
+import { Activity, FolderOpen, X, FileDown, GitCompareArrows, BarChart2, Loader2, Clock, RefreshCw, ChevronDown } from 'lucide-react';
 import { parseLogFile } from './utils/logParser';
 import { exportReport } from './utils/exportPdf.js';
 import FileUploader from './components/FileUploader';
@@ -76,12 +76,142 @@ function ModeToggle({ mode, onModeChange }) {
   );
 }
 
+function extractDeviceLabel(text) {
+  const m = text.match(/Dispositivo:\s*([^\n]+)/i);
+  return m ? m[1].trim() : '—';
+}
+
+function HistoryCard({ item, onReload }) {
+  const dateParts = item.firstTs ? item.firstTs.split(' ') : ['', ''];
+  const date      = dateParts[0] ?? '';
+  const firstTime = (dateParts[1] ?? '').slice(0, 5);
+  const lastTime  = (item.lastTs?.split(' ')[1] ?? '').slice(0, 5);
+
+  return (
+    <div style={{
+      background: '#111827', border: '1px solid #1f2937',
+      borderRadius: '12px', padding: '16px',
+      display: 'flex', flexDirection: 'column', gap: '10px',
+    }}>
+      <div>
+        <p style={{
+          color: '#f9fafb', fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '12px', fontWeight: 600, margin: 0,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }} title={item.fileName}>
+          {item.fileName}
+        </p>
+        <p style={{
+          color: '#6b7280', fontFamily: "'Space Grotesk', sans-serif",
+          fontSize: '11px', margin: '4px 0 0',
+        }}>
+          {item.deviceLabel}
+        </p>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
+          <Clock size={11} color="#4b5563" style={{ flexShrink: 0 }} />
+          <span style={{
+            color: '#6b7280', fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {date} · {firstTime} → {lastTime}
+          </span>
+        </div>
+        <span style={{
+          flexShrink: 0, background: '#1f2937', color: '#6b7280',
+          fontSize: '10px', borderRadius: '6px', padding: '2px 7px',
+          fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap',
+        }}>
+          {item.entryCount} ent.
+        </span>
+      </div>
+      <button
+        onClick={() => onReload(item)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+          padding: '6px', borderRadius: '8px', width: '100%',
+          background: 'transparent', border: '1px solid #374151',
+          color: '#9ca3af', cursor: 'pointer',
+          fontFamily: "'Space Grotesk', sans-serif", fontSize: '12px',
+        }}
+        onMouseOver={e => { e.currentTarget.style.background = '#1f2937'; e.currentTarget.style.color = '#f9fafb'; }}
+        onMouseOut={e  => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9ca3af'; }}
+      >
+        <RefreshCw size={12} />
+        Cargar de nuevo
+      </button>
+    </div>
+  );
+}
+
+function HistoryPanel({ history, onReload, isOpen, onToggle }) {
+  if (history.length === 0) return null;
+  return (
+    <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 24px 48px' }}>
+      <button
+        onClick={onToggle}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          width: '100%', padding: '14px 0',
+          borderTop: '1px solid #1f2937', borderBottom: 'none',
+          borderLeft: 'none', borderRight: 'none',
+          background: 'none', cursor: 'pointer',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Clock size={14} color="#6b7280" />
+          <span style={{
+            color: '#9ca3af', fontFamily: "'Space Grotesk', sans-serif",
+            fontWeight: 600, fontSize: '14px',
+          }}>
+            Historial de análisis
+          </span>
+          <span style={{
+            background: '#1f2937', color: '#6b7280',
+            fontSize: '10px', fontFamily: "'Space Grotesk', sans-serif",
+            borderRadius: '99px', padding: '2px 8px',
+          }}>
+            {history.length}
+          </span>
+        </div>
+        <ChevronDown
+          size={16}
+          color="#6b7280"
+          style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+        />
+      </button>
+      {isOpen && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+          gap: '12px', paddingTop: '16px',
+        }}>
+          {history.map(item => (
+            <HistoryCard key={item.id} item={item} onReload={onReload} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [mode, setMode] = useState('single');
 
   // Single mode
   const [entries, setEntries]   = useState(null);
   const [fileName, setFileName] = useState('');
+
+  // Chart refs for PDF export (single mode)
+  const memChartRef  = useRef(null);
+  const swapChartRef = useRef(null);
+  const cpuChartRef  = useRef(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Session history (in-memory, single mode)
+  const [history,       setHistory]       = useState([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(true);
 
   // Compare mode
   const [deviceA, setDeviceA] = useState(null);
@@ -97,9 +227,22 @@ export default function App() {
   }
 
   function handleFileLoaded(text, name) {
-    const parsed = parseLogFile(text);
+    const parsed   = parseLogFile(text);
+    const safeName = name || 'log.txt';
     setEntries(parsed);
-    setFileName(name || 'log.txt');
+    setFileName(safeName);
+    if (parsed.length > 0) {
+      const entry = {
+        id:          Date.now(),
+        fileName:    safeName,
+        deviceLabel: extractDeviceLabel(text),
+        firstTs:     parsed[0].timestamp,
+        lastTs:      parsed[parsed.length - 1].timestamp,
+        entryCount:  parsed.length,
+        entries:     parsed,
+      };
+      setHistory(prev => [entry, ...prev.filter(h => h.fileName !== safeName)]);
+    }
   }
 
   function resetSingle() {
@@ -117,8 +260,21 @@ export default function App() {
     setDeviceB(null);
   }
 
+  function reloadFromHistory(item) {
+    setMode('single');
+    setDeviceA(null);
+    setDeviceB(null);
+    setEntries(item.entries);
+    setFileName(item.fileName);
+  }
+
   async function handleExportSingle() {
-    await exportReport('single', { entries, fileName });
+    setIsExporting(true);
+    try {
+      await exportReport('single', { entries, fileName, refs: { memChartRef, swapChartRef, cpuChartRef } });
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   const latest = useMemo(() => entries?.[entries.length - 1] ?? null, [entries]);
@@ -182,6 +338,12 @@ export default function App() {
             onReset={resetCompare}
           />
         )}
+        <HistoryPanel
+          history={history}
+          onReload={reloadFromHistory}
+          isOpen={isHistoryOpen}
+          onToggle={() => setIsHistoryOpen(v => !v)}
+        />
       </div>
     );
   }
@@ -217,6 +379,12 @@ export default function App() {
           </div>
         </nav>
         <FileUploader onFileLoaded={handleFileLoaded} style={{ minHeight: 'calc(100vh - 56px)' }} />
+        <HistoryPanel
+          history={history}
+          onReload={reloadFromHistory}
+          isOpen={isHistoryOpen}
+          onToggle={() => setIsHistoryOpen(v => !v)}
+        />
       </div>
     );
   }
@@ -341,18 +509,22 @@ export default function App() {
             {/* Export PDF */}
             <button
               onClick={handleExportSingle}
+              disabled={isExporting}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 12px', borderRadius: '8px',
                 background: '#1e3a5f', border: '1px solid #2563eb40',
-                color: '#93c5fd', cursor: 'pointer',
+                color: '#93c5fd', cursor: isExporting ? 'not-allowed' : 'pointer',
+                opacity: isExporting ? 0.7 : 1,
                 fontFamily: "'Space Grotesk', sans-serif", fontSize: '13px', fontWeight: 600,
               }}
-              onMouseOver={e => e.currentTarget.style.background = '#1d4ed8'}
-              onMouseOut={e  => e.currentTarget.style.background = '#1e3a5f'}
+              onMouseOver={e => { if (!isExporting) e.currentTarget.style.background = '#1d4ed8'; }}
+              onMouseOut={e  => { if (!isExporting) e.currentTarget.style.background = '#1e3a5f'; }}
             >
-              <FileDown size={14} />
-              Exportar PDF
+              {isExporting
+                ? <Loader2 size={14} className="animate-spin" />
+                : <FileDown size={14} />}
+              {isExporting ? 'Generando PDF...' : 'Exportar PDF'}
             </button>
 
             {/* Reset */}
@@ -386,14 +558,14 @@ export default function App() {
 
         <section style={{ marginBottom: '36px' }} className="animate-fade-in-up animate-fade-in-up-delay-2">
           <SectionHeader title="Memoria Disponible" subtitle="Evolución de MemAvailable a lo largo del tiempo" />
-          <MemoryChart entries={entries} />
+          <MemoryChart entries={entries} ref={memChartRef} />
         </section>
 
         <section style={{ marginBottom: '36px' }} className="animate-fade-in-up animate-fade-in-up-delay-3">
           <SectionHeader title="Swap y CPU" subtitle="Uso de swap y carga del procesador" />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
-            <SwapChart entries={entries} />
-            <CpuChart entries={entries} />
+            <SwapChart entries={entries} ref={swapChartRef} />
+            <CpuChart entries={entries} ref={cpuChartRef} />
           </div>
         </section>
 
@@ -410,6 +582,12 @@ export default function App() {
           </div>
         </section>
       </main>
+      <HistoryPanel
+        history={history}
+        onReload={reloadFromHistory}
+        isOpen={isHistoryOpen}
+        onToggle={() => setIsHistoryOpen(v => !v)}
+      />
     </div>
   );
 }

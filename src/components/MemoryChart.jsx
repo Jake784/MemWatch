@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ReferenceLine, Dot,
@@ -10,7 +10,7 @@ function shortLabel(ts) {
   return parts.length === 2 ? parts[1].slice(0, 5) : ts.slice(0, 5);
 }
 
-function StatBadge({ label, value, color }) {
+function StatBadge({ label, value, color, trend }) {
   return (
     <div
       className="flex flex-col items-center px-4 py-2 rounded-lg"
@@ -19,8 +19,9 @@ function StatBadge({ label, value, color }) {
       <span style={{ color: '#6b7280', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: "'Space Grotesk', sans-serif" }}>
         {label}
       </span>
-      <span style={{ color, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: '18px' }}>
+      <span style={{ color, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '3px' }}>
         {value} <span style={{ fontSize: '11px', fontWeight: 400 }}>MB</span>
+        {trend && <span style={{ color: trend.color, fontSize: '14px', fontWeight: 700, lineHeight: 1 }}>{trend.arrow}</span>}
       </span>
     </div>
   );
@@ -49,7 +50,7 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
-export default function MemoryChart({ entries }) {
+const MemoryChart = React.forwardRef(function MemoryChart({ entries }, ref) {
   const data = useMemo(() =>
     entries.map(e => ({ ts: e.timestamp, label: shortLabel(e.timestamp), memAvailableMB: e.memAvailableMB })),
     [entries]
@@ -76,10 +77,17 @@ export default function MemoryChart({ entries }) {
   const lastAvg   = vals.slice(-sl).reduce((a, b) => a + b, 0) / sl;
   const isDowntrend = vals.length >= 10 && lastAvg < firstAvg;
 
+  const trendN     = Math.min(3, vals.length);
+  const trendFirst = vals.slice(0, trendN).reduce((a, b) => a + b, 0) / trendN;
+  const trendLast  = vals.slice(-trendN).reduce((a, b) => a + b, 0) / trendN;
+  const memTrend   = trendFirst > 0 && trendLast > trendFirst * 1.05 ? { arrow: '↑', color: '#10b981' }
+                   : trendFirst > 0 && trendLast < trendFirst * 0.95 ? { arrow: '↓', color: '#ef4444' }
+                   :                                                     { arrow: '→', color: '#6b7280' };
+
   const allAbove400 = min > 400;
 
   return (
-    <div className="rounded-2xl p-5" style={{ background: '#111827', border: '1px solid #1f2937' }}>
+    <div ref={ref} className="rounded-2xl p-5" style={{ background: '#111827', border: '1px solid #1f2937' }}>
       <div className="flex items-center justify-between mb-4">
         <h3 style={{ color: '#f9fafb', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: '15px', margin: 0 }}>
           Memoria Disponible (MemAvailable)
@@ -87,7 +95,7 @@ export default function MemoryChart({ entries }) {
       </div>
       <div className="flex gap-3 mb-5">
         <StatBadge label="Mínimo" value={min} color="#ef4444" />
-        <StatBadge label="Promedio" value={avg} color="#f59e0b" />
+        <StatBadge label="Promedio" value={avg} color="#f59e0b" trend={memTrend} />
         <StatBadge label="Máximo" value={max} color="#10b981" />
       </div>
       <ResponsiveContainer width="100%" height={260}>
@@ -141,4 +149,6 @@ export default function MemoryChart({ entries }) {
       )}
     </div>
   );
-}
+});
+
+export default MemoryChart;

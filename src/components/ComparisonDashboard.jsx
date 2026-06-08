@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine, Legend,
 } from 'recharts';
-import { FileDown, ArrowLeft } from 'lucide-react';
+import { FileDown, ArrowLeft, Loader2 } from 'lucide-react';
 import InsightBadge from './InsightBadge.jsx';
 import {
   computeStats, getAllPackages, getPackageDiffs,
@@ -25,16 +25,19 @@ function SectionHeader({ title, subtitle }) {
   );
 }
 
-function StatRow({ label, value, color }) {
+function StatRow({ label, value, color, suffix }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #1f293740' }}>
       <span style={{ color: '#9ca3af', fontFamily: "'Space Grotesk', sans-serif", fontSize: '12px' }}>{label}</span>
-      <span style={{ color: color ?? '#f9fafb', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: '14px' }}>{value}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span style={{ color: color ?? '#f9fafb', fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: '14px' }}>{value}</span>
+        {suffix}
+      </span>
     </div>
   );
 }
 
-function DeviceCard({ label, stats, accent }) {
+function DeviceCard({ label, stats, accent, memTrend }) {
   return (
     <div style={{
       flex: 1, minWidth: 0,
@@ -47,7 +50,12 @@ function DeviceCard({ label, stats, accent }) {
           {label}
         </span>
       </div>
-      <StatRow label="Mem. disponible (prom.)" value={`${stats.avgMem} MB`} color="#3b82f6" />
+      <StatRow
+        label="Mem. disponible (prom.)"
+        value={`${stats.avgMem} MB`}
+        color="#3b82f6"
+        suffix={memTrend && <span style={{ color: memTrend.color, fontWeight: 700, fontSize: '15px', lineHeight: 1 }}>{memTrend.arrow}</span>}
+      />
       <StatRow label="Mem. disponible (mín.)"  value={`${stats.minMem} MB`} color={stats.minMem < 200 ? '#ef4444' : '#f9fafb'} />
       <StatRow label="Swap usado (prom.)"       value={`${stats.avgSwap} MB`} color={stats.avgSwap > 300 ? '#f59e0b' : '#f9fafb'} />
       <StatRow label="Eventos críticos"          value={String(stats.alertCount)} color={stats.alertCount > 0 ? '#ef4444' : '#10b981'} />
@@ -66,12 +74,78 @@ function DeviceCard({ label, stats, accent }) {
 
 // ─── overlaid chart ──────────────────────────────────────────────────────────
 
+function calcMemTrend(entries) {
+  const vals = entries.map(e => e.memAvailableMB);
+  const n = Math.min(3, vals.length);
+  const first = vals.slice(0, n).reduce((a, b) => a + b, 0) / n;
+  const last  = vals.slice(-n).reduce((a, b) => a + b, 0) / n;
+  const pct = first > 0 ? (last - first) / first : 0;
+  return pct > 0.05  ? { arrow: '↑', color: '#10b981' }
+       : pct < -0.05 ? { arrow: '↓', color: '#ef4444' }
+       :               { arrow: '→', color: '#6b7280' };
+}
+
+function ComparisonBanner({ statsA, statsB, labelA, labelB }) {
+  const memDiff  = statsB.avgMem - statsA.avgMem;
+  const memPct   = statsA.avgMem > 0 ? Math.abs(Math.round(memDiff / statsA.avgMem * 100)) : 0;
+  const swapDiff = statsA.avgSwap - statsB.avgSwap;
+  const swapPct  = statsA.avgSwap > 0 ? Math.abs(Math.round(swapDiff / statsA.avgSwap * 100)) : 0;
+  const alertDiff = statsA.alertCount - statsB.alertCount;
+
+  const bIsBetter = statsB.avgMem > statsA.avgMem;
+  const betterLabel = bIsBetter ? labelB : labelA;
+
+  let color, bg, border;
+  if (!bIsBetter) {
+    color = '#ef4444'; bg = 'rgba(239,68,68,0.08)'; border = 'rgba(239,68,68,0.3)';
+  } else if (memPct < 10) {
+    color = '#f59e0b'; bg = 'rgba(245,158,11,0.08)'; border = 'rgba(245,158,11,0.3)';
+  } else {
+    color = '#10b981'; bg = 'rgba(16,185,129,0.08)'; border = 'rgba(16,185,129,0.3)';
+  }
+
+  const swapText  = swapDiff >= 0
+    ? `Swap ${swapPct}% menor`
+    : `Swap ${swapPct}% mayor`;
+  const alertText = alertDiff > 0
+    ? `${alertDiff} evento${alertDiff !== 1 ? 's' : ''} crítico${alertDiff !== 1 ? 's' : ''} menos`
+    : alertDiff < 0
+    ? `${Math.abs(alertDiff)} evento${Math.abs(alertDiff) !== 1 ? 's' : ''} crítico${Math.abs(alertDiff) !== 1 ? 's' : ''} más`
+    : 'Sin diferencia en eventos críticos';
+
+  return (
+    <div style={{
+      padding: '14px 20px',
+      background: bg,
+      border: `1px solid ${border}`,
+      borderRadius: '12px',
+      marginBottom: '28px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px',
+    }}>
+      <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      <span style={{ color, fontFamily: "'Space Grotesk', sans-serif", fontSize: '13px', fontWeight: 600 }}>
+        {betterLabel} tiene {memPct}% más memoria disponible · {swapText} · {alertText}
+      </span>
+    </div>
+  );
+}
+
+function shortLabel(ts) {
+  if (!ts) return '';
+  const parts = ts.split(' ');
+  return parts.length === 2 ? parts[1].slice(0, 5) : ts.slice(0, 5);
+}
+
 function CompareTooltip({ active, payload, label, labelA, labelB }) {
   if (!active || !payload?.length) return null;
+  const ts   = payload[0]?.payload?.tsA ?? payload[0]?.payload?.tsB;
+  const hhmm = shortLabel(ts);
   return (
     <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '8px', padding: '10px 14px' }}>
       <p style={{ color: '#9ca3af', fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', marginBottom: 4 }}>
-        Entrada #{label}
+        {hhmm ? `${hhmm} — Entrada #${label}` : `Entrada #${label}`}
       </p>
       {payload.map((p, i) => p.value != null && (
         <p key={i} style={{ color: p.color, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, margin: '2px 0' }}>
@@ -82,15 +156,17 @@ function CompareTooltip({ active, payload, label, labelA, labelB }) {
   );
 }
 
-function OverlaidLineChart({ dataA, dataB, labelA, labelB, colorA, colorB, yUnit = 'MB', refLines = [] }) {
+function OverlaidLineChart({ dataA, dataB, labelA, labelB, colorA, colorB, yUnit = 'MB', refLines = [], timestampsA = [], timestampsB = [] }) {
   const chartData = useMemo(() => {
     const len = Math.max(dataA.length, dataB.length);
     return Array.from({ length: len }, (_, i) => ({
       index: i,
+      tsA: timestampsA[i] ?? null,
+      tsB: timestampsB[i] ?? null,
       [labelA]: dataA[i] ?? null,
       [labelB]: dataB[i] ?? null,
     }));
-  }, [dataA, dataB, labelA, labelB]);
+  }, [dataA, dataB, labelA, labelB, timestampsA, timestampsB]);
 
   const allVals = [...dataA, ...dataB].filter(v => v != null);
   const yMin = Math.max(0, Math.min(...allVals) - 40);
@@ -109,7 +185,11 @@ function OverlaidLineChart({ dataA, dataB, labelA, labelB, colorA, colorB, yUnit
           ticks={ticks}
           tick={{ fill: '#6b7280', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}
           axisLine={{ stroke: '#1f2937' }} tickLine={false}
-          label={{ value: 'Entrada #', position: 'insideBottomRight', offset: -8, fill: '#4b5563', fontSize: 10 }}
+          tickFormatter={idx => {
+            const d  = chartData[idx];
+            const ts = d?.tsA ?? d?.tsB;
+            return ts ? (ts.split(' ')[1]?.slice(0, 5) ?? String(idx)) : String(idx);
+          }}
         />
         <YAxis
           domain={[yMin, yMax]}
@@ -136,34 +216,50 @@ function OverlaidLineChart({ dataA, dataB, labelA, labelB, colorA, colorB, yUnit
 
 // ─── package comparison ──────────────────────────────────────────────────────
 
+function isDisabled(v) { return v === 0 || v === 3; }
+
+function pkgHasActiveProcess(pkgName, procs) {
+  const lower = pkgName.toLowerCase();
+  return procs.some(p => {
+    const pl = p.trim().toLowerCase();
+    return pl.length > 0 && (pl.includes(lower) || lower.includes(pl));
+  });
+}
+
 function StatusDot({ value }) {
-  const color = value === 0 ? '#10b981' : '#ef4444';
-  return <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, margin: '0 auto' }} title={`enabled=${value}`} />;
+  if (value == null) {
+    return <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#374151', margin: '0 auto' }} title="No registrado" />;
+  }
+  const color = isDisabled(value) ? '#10b981' : '#ef4444';
+  const label = value === 0 ? 'Deshabilitado (sistema)' : value === 3 ? 'Deshabilitado (usuario)' : 'Activo';
+  return <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, margin: '0 auto' }} title={`${label} (enabled=${value})`} />;
 }
 
 function PackageComparison({ entriesA, entriesB, labelA, labelB }) {
-  const packages = useMemo(() => getAllPackages(entriesA, entriesB), [entriesA, entriesB]);
+  const packages  = useMemo(() => getAllPackages(entriesA, entriesB), [entriesA, entriesB]);
   const diffCount = packages.filter(p => p.isProblematic).length;
+  const procsA    = entriesA[entriesA.length - 1]?.unwantedProcesses ?? [];
+  const procsB    = entriesB[entriesB.length - 1]?.unwantedProcesses ?? [];
 
   return (
     <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', overflow: 'hidden' }}>
       {/* Banner */}
-      <div style={{
-        padding: '12px 20px',
-        background: diffCount > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)',
-        borderBottom: `1px solid ${diffCount > 0 ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.25)'}`,
-        display: 'flex', alignItems: 'center', gap: '10px',
-      }}>
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: diffCount > 0 ? '#ef4444' : '#10b981', flexShrink: 0 }} />
-        <span style={{
-          color: diffCount > 0 ? '#ef4444' : '#10b981',
-          fontFamily: "'Space Grotesk', sans-serif", fontSize: '13px', fontWeight: 600,
+      {diffCount > 0 && (
+        <div style={{
+          padding: '12px 20px',
+          background: 'rgba(239,68,68,0.08)',
+          borderBottom: '1px solid rgba(239,68,68,0.25)',
+          display: 'flex', alignItems: 'center', gap: '10px',
         }}>
-          {diffCount > 0
-            ? `${diffCount} paquete${diffCount !== 1 ? 's' : ''} habilitado${diffCount !== 1 ? 's' : ''} en ${labelA} que permanece${diffCount !== 1 ? 'n' : ''} deshabilitado${diffCount !== 1 ? 's' : ''} en ${labelB}`
-            : 'Misma configuración de paquetes en ambos dispositivos'}
-        </span>
-      </div>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
+          <span style={{
+            color: '#ef4444',
+            fontFamily: "'Space Grotesk', sans-serif", fontSize: '13px', fontWeight: 600,
+          }}>
+            {`${diffCount} paquete${diffCount !== 1 ? 's' : ''} está${diffCount !== 1 ? 'n' : ''} activo${diffCount !== 1 ? 's' : ''} en "${labelA}" pero deshabilitado${diffCount !== 1 ? 's' : ''} en "${labelB}" — revisar si el script de optimización se aplicó correctamente`}
+          </span>
+        </div>
+      )}
 
       {/* Table */}
       <div style={{ overflowX: 'auto' }}>
@@ -181,30 +277,57 @@ function PackageComparison({ entriesA, entriesB, labelA, labelB }) {
             </tr>
           </thead>
           <tbody>
-            {packages.map((pkg, idx) => (
-              <tr key={pkg.name} style={{
-                borderBottom: '1px solid #0f172a',
-                background: pkg.isProblematic ? 'rgba(239,68,68,0.06)' : (idx % 2 === 0 ? '#111827' : '#0d1523'),
-              }}>
-                <td style={{
-                  padding: '8px 20px',
-                  fontFamily: "'JetBrains Mono', monospace", fontSize: '12px',
-                  color: pkg.isProblematic ? '#ef4444' : '#9ca3af',
-                  fontWeight: pkg.isProblematic ? 600 : 400,
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px',
-                }} title={pkg.name}>
-                  {pkg.name}
-                </td>
-                <td style={{ padding: '8px 16px', textAlign: 'center' }}>
-                  <StatusDot value={pkg.valA} />
-                </td>
-                <td style={{ padding: '8px 16px', textAlign: 'center' }}>
-                  <StatusDot value={pkg.valB} />
-                </td>
-              </tr>
-            ))}
+            {packages.map((pkg, idx) => {
+              const inMemA = pkgHasActiveProcess(pkg.name, procsA);
+              const inMemB = pkgHasActiveProcess(pkg.name, procsB);
+              return (
+                <tr key={pkg.name} style={{
+                  borderBottom: '1px solid #0f172a',
+                  background: pkg.isProblematic ? 'rgba(239,68,68,0.06)' : (idx % 2 === 0 ? '#111827' : '#0d1523'),
+                }}>
+                  <td style={{
+                    padding: '8px 20px',
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: '12px',
+                    color: pkg.isProblematic ? '#ef4444' : '#9ca3af',
+                    fontWeight: pkg.isProblematic ? 600 : 400,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px',
+                  }} title={pkg.name}>
+                    {pkg.name}
+                  </td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                      <StatusDot value={pkg.valA} />
+                      {inMemA && <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444', flexShrink: 0, cursor: 'default' }} title="Proceso activo en memoria detectado en última entrada" />}
+                    </div>
+                  </td>
+                  <td style={{ padding: '8px 16px', textAlign: 'center' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                      <StatusDot value={pkg.valB} />
+                      {inMemB && <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444', flexShrink: 0, cursor: 'default' }} title="Proceso activo en memoria detectado en última entrada" />}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+      </div>
+      {/* Legend */}
+      <div style={{ padding: '10px 20px', borderTop: '1px solid #1f2937', display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
+        <span style={{ color: '#4b5563', fontFamily: "'Space Grotesk', sans-serif", fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+          Leyenda
+        </span>
+        {[
+          { size: 10, color: '#10b981', label: 'Deshabilitado (0/3)' },
+          { size: 10, color: '#ef4444', label: 'Activo (1/2)' },
+          { size: 10, color: '#374151', label: 'No registrado' },
+          { size: 6,  color: '#ef4444', label: 'Proceso activo en memoria' },
+        ].map(({ size, color, label }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <div style={{ width: size, height: size, borderRadius: '50%', background: color, flexShrink: 0 }} />
+            <span style={{ color: '#6b7280', fontFamily: "'Space Grotesk', sans-serif", fontSize: '11px' }}>{label}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -215,6 +338,10 @@ function PackageComparison({ entriesA, entriesB, labelA, labelB }) {
 export default function ComparisonDashboard({ deviceA, deviceB, onReset }) {
   const { entries: entriesA, fileName: fileA, label: labelA } = deviceA;
   const { entries: entriesB, fileName: fileB, label: labelB } = deviceB;
+
+  const compareMemChartRef  = useRef(null);
+  const compareSwapChartRef = useRef(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const statsA = useMemo(() => computeStats(entriesA), [entriesA]);
   const statsB = useMemo(() => computeStats(entriesB), [entriesB]);
@@ -227,6 +354,10 @@ export default function ComparisonDashboard({ deviceA, deviceB, onReset }) {
   const memB  = useMemo(() => entriesB.map(e => e.memAvailableMB),  [entriesB]);
   const swapA = useMemo(() => entriesA.map(e => e.swapUsedMB),      [entriesA]);
   const swapB = useMemo(() => entriesB.map(e => e.swapUsedMB),      [entriesB]);
+  const tsA   = useMemo(() => entriesA.map(e => e.timestamp),        [entriesA]);
+  const tsB   = useMemo(() => entriesB.map(e => e.timestamp),        [entriesB]);
+  const trendA = useMemo(() => calcMemTrend(entriesA), [entriesA]);
+  const trendB = useMemo(() => calcMemTrend(entriesB), [entriesB]);
 
   const critA = memA.filter(v => v < 200).length;
   const critB = memB.filter(v => v < 200).length;
@@ -235,7 +366,15 @@ export default function ComparisonDashboard({ deviceA, deviceB, onReset }) {
   const swapPeaksB = swapB.filter(v => v > 400).length;
 
   async function handleExport() {
-    await exportReport('compare', { deviceA, deviceB });
+    setIsExporting(true);
+    try {
+      await exportReport('compare', {
+        deviceA, deviceB,
+        refs: { memChartRef: compareMemChartRef, swapChartRef: compareSwapChartRef },
+      });
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   return (
@@ -257,18 +396,22 @@ export default function ComparisonDashboard({ deviceA, deviceB, onReset }) {
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
               onClick={handleExport}
+              disabled={isExporting}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '7px 14px', borderRadius: '8px',
                 background: '#1e3a5f', border: '1px solid #2563eb40',
-                color: '#93c5fd', cursor: 'pointer',
+                color: '#93c5fd', cursor: isExporting ? 'not-allowed' : 'pointer',
+                opacity: isExporting ? 0.7 : 1,
                 fontFamily: "'Space Grotesk', sans-serif", fontSize: '13px', fontWeight: 600,
               }}
-              onMouseOver={e => e.currentTarget.style.background = '#1d4ed8'}
-              onMouseOut={e => e.currentTarget.style.background = '#1e3a5f'}
+              onMouseOver={e => { if (!isExporting) e.currentTarget.style.background = '#1d4ed8'; }}
+              onMouseOut={e => { if (!isExporting) e.currentTarget.style.background = '#1e3a5f'; }}
             >
-              <FileDown size={14} />
-              Exportar PDF
+              {isExporting
+                ? <Loader2 size={14} className="animate-spin" />
+                : <FileDown size={14} />}
+              {isExporting ? 'Generando PDF...' : 'Exportar PDF'}
             </button>
             <button
               onClick={onReset}
@@ -288,12 +431,15 @@ export default function ComparisonDashboard({ deviceA, deviceB, onReset }) {
           </div>
         </div>
 
+        {/* Summary Banner */}
+        <ComparisonBanner statsA={statsA} statsB={statsB} labelA={labelA} labelB={labelB} />
+
         {/* 1. Summary Cards */}
         <section style={{ marginBottom: '36px' }}>
           <SectionHeader title="Resumen Comparativo" subtitle="Métricas clave por dispositivo" />
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
-            <DeviceCard label={labelA} stats={statsA} accent="#3b82f6" />
-            <DeviceCard label={labelB} stats={statsB} accent="#a855f7" />
+            <DeviceCard label={labelA} stats={statsA} accent="#3b82f6" memTrend={trendA} />
+            <DeviceCard label={labelB} stats={statsB} accent="#a855f7" memTrend={trendB} />
           </div>
           {/* Insight chips */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
@@ -304,11 +450,12 @@ export default function ComparisonDashboard({ deviceA, deviceB, onReset }) {
         {/* 2. Memory Chart */}
         <section style={{ marginBottom: '36px' }}>
           <SectionHeader title="Memoria Disponible — Comparación" subtitle="MemAvailable a lo largo del tiempo por dispositivo" />
-          <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+          <div ref={compareMemChartRef} style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
             <OverlaidLineChart
               dataA={memA} dataB={memB}
               labelA={labelA} labelB={labelB}
               colorA="#3b82f6" colorB="#a855f7"
+              timestampsA={tsA} timestampsB={tsB}
               refLines={[
                 { y: 200, color: '#ef4444', label: 'Crítico 200 MB' },
                 { y: 400, color: '#f59e0b', label: 'Advertencia 400 MB' },
@@ -328,11 +475,12 @@ export default function ComparisonDashboard({ deviceA, deviceB, onReset }) {
         {/* 3. Swap Chart */}
         <section style={{ marginBottom: '36px' }}>
           <SectionHeader title="Swap Utilizado — Comparación" subtitle="SwapUsed a lo largo del tiempo por dispositivo" />
-          <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
+          <div ref={compareSwapChartRef} style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '16px', padding: '20px' }}>
             <OverlaidLineChart
               dataA={swapA} dataB={swapB}
               labelA={labelA} labelB={labelB}
               colorA="#3b82f6" colorB="#a855f7"
+              timestampsA={tsA} timestampsB={tsB}
               refLines={[
                 { y: 400, color: '#f59e0b', label: 'Advertencia 400 MB' },
               ]}

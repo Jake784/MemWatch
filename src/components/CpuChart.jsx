@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
@@ -40,7 +40,7 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
-export default function CpuChart({ entries }) {
+const CpuChart = React.forwardRef(function CpuChart({ entries }, ref) {
   const data = useMemo(() =>
     entries.map(e => ({ ts: e.timestamp, label: shortLabel(e.timestamp), cpuLoad1: e.cpuLoad1 })),
     [entries]
@@ -64,7 +64,7 @@ export default function CpuChart({ entries }) {
   const maxTs  = data[maxIdx]?.ts ?? '';
 
   return (
-    <div className="rounded-2xl p-5" style={{ background: '#111827', border: '1px solid #1f2937' }}>
+    <div ref={ref} className="rounded-2xl p-5" style={{ background: '#111827', border: '1px solid #1f2937' }}>
       <div className="flex items-center justify-between mb-4">
         <h3 style={{ color: '#f9fafb', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, fontSize: '15px', margin: 0 }}>
           Carga de CPU (1 min)
@@ -121,4 +121,6 @@ export default function CpuChart({ entries }) {
       )}
     </div>
   );
-}
+});
+
+export default CpuChart;
